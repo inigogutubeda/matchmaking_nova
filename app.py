@@ -19,7 +19,7 @@ def process_data(uploaded_file):
     # Cargar el archivo Excel
     xls = pd.ExcelFile(uploaded_file)
     
-    # Cargar hojas de mentores y mentees
+    # Cargar hojas de mentores y mentees con nombres corregidos
     df_mentors = xls.parse("Mentors data updated").fillna("")
     df_mentees = xls.parse("Mentee data updated").fillna("")
     
@@ -31,7 +31,7 @@ def process_data(uploaded_file):
 
 # Función para generar matches
 def generate_matches(df_mentors, df_mentees):
-    # Generar embeddings de las biografías
+    # Generar embeddings de las biografías usando los nombres correctos
     mentor_embeddings = model.encode(df_mentors["mentor_biography"].astype(str).tolist(), convert_to_tensor=True)
     mentee_embeddings = model.encode(df_mentees["mentee_biography"].astype(str).tolist(), convert_to_tensor=True)
 
@@ -77,19 +77,39 @@ def generate_matches(df_mentors, df_mentees):
 
     df_mentees["Final Matching Score"] = df_mentees.apply(calculate_final_score, axis=1)
 
-    return df_mentees
+    return df_mentees, best_matches
 
 # Función para mostrar resultados y permitir descarga
-def display_results(df_mentees):
+def display_results(df_mentees, df_mentors, best_matches):
     # Explicación del match
     def generate_explanation(row):
+        mentor_idx = best_matches[row.name]
+        mentor = df_mentors.iloc[mentor_idx]
+        
         explanation = f"Recomendado a {row['Best Mentor']} basado en:"
+        
+        # Similitud semántica en biografía
         if row["Matching Score (Embeddings)"] > 0.5:
             explanation += " ↪ Similitud en biografía."
-        if row["current_industry"] == df_mentors.iloc[best_matches[row.name]]["current_industry"]:
+
+        # Coincidencia en industria
+        if row["current_industry"] == mentor["current_industry"]:
             explanation += " ↪ Industria compatible."
-        if df_mentors.iloc[best_matches[row.name]]["years_of_experience"] - row["years_of_experience"] >= 5:
+
+        # Coincidencia en idioma
+        mentee_languages = set(row["languages"].split(";;"))
+        mentor_languages = set(mentor["languages"].split(";;"))
+
+        common_languages = mentee_languages.intersection(mentor_languages)
+        fluent_or_native = any("Fluent" in lang or "Native" in lang for lang in common_languages)
+
+        if fluent_or_native:
+            explanation += " ↪ Coincidencia de idioma."
+
+        # Diferencia de experiencia laboral
+        if mentor["years_of_experience"] - row["years_of_experience"] >= 5:
             explanation += " ↪ Diferencia de experiencia adecuada."
+
         return explanation
 
     df_mentees["Match Explanation"] = df_mentees.apply(generate_explanation, axis=1)
@@ -97,7 +117,7 @@ def display_results(df_mentees):
     # Mostrar tabla de resultados
     st.write("### Resultados de Matching")
     st.dataframe(df_mentees[[
-        "Name", "Mentee LinkedIn", "Best Mentor", "Best Mentor Email", "Best Mentor LinkedIn",
+        "Name", "linkedin", "Best Mentor", "Best Mentor Email", "Best Mentor LinkedIn",
         "Matching Score (Embeddings)", "Final Matching Score", "Match Explanation"
     ]])
 
@@ -114,5 +134,5 @@ uploaded_file = st.file_uploader("📂 Sube un archivo Excel con datos de mentor
 
 if uploaded_file:
     df_mentors, df_mentees = process_data(uploaded_file)
-    df_mentees = generate_matches(df_mentors, df_mentees)
-    display_results(df_mentees)
+    df_mentees, best_matches = generate_matches(df_mentors, df_mentees)
+    display_results(df_mentees, df_mentors, best_matches)
